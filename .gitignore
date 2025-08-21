@@ -1,0 +1,43 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+
+# Zig test output
+test-output.txt
+
+# Editor/IDE files
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*.log
+
+# VSCode
+.vscode/
+
+# MacOS
+.DS_Store
+
+# CLion
+.idea/
+
+# Ctags
+tags
+
+# Ignore binaries
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+*.a
+*.out
+
+# Ignore generated documentation
+docs/
+
+# Ignore user-specific config
+config.local.zig
+
