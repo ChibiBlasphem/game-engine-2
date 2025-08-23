@@ -3,6 +3,7 @@ const wgpu = @import("./shared/wgpu.zig");
 const imgui = @import("./shared/imgui.zig");
 const core = @import("./core.zig");
 const coord = @import("./coord.zig");
+const math = @import("./math.zig");
 const app = @import("./app.zig");
 const wgsl = @embedFile("./shaders/grid.wgsl");
 
@@ -61,10 +62,25 @@ pub const Binding = union(enum) {
 
 pub const BindGroup = struct {
     _g: wgpu.WGPUBindGroup,
+    _b: std.AutoHashMap(u32, core.Buffer),
 
     pub fn destroy(self: *BindGroup) void {
+        var i = self._b.iterator();
+        while (i.next()) |item| {
+            item.value_ptr.*.destroy();
+        }
+        self._b.deinit();
         wgpu.wgpuBindGroupRelease(self._g);
     }
+
+    pub fn getBuffer(self: *BindGroup, binding: u32) ?core.Buffer {
+        return self._b.get(binding);
+    }
+};
+
+pub const BindGroupInfo = struct {
+    bgl: BindGroupLayout,
+    bg: BindGroup,
 };
 
 pub const PipelineDescriptor = struct {
@@ -104,15 +120,20 @@ pub const RenderPass = struct {
     }
 };
 
+pub const FrameUBO = extern struct {
+    vp: math.mat4x4,
+    ivp: math.mat4x4,
+    pos: math.f32x3,
+};
+
 pub const Renderer3D = struct {
-    cam_binding: app.CameraBinding,
-    frame: *RenderFrame,
+    frame: *const FrameRenderer,
     pass: RenderPass,
 
     // region Renderer3D.Lifecycle
-    pub fn init(frame: *RenderFrame, camera_binding: app.CameraBinding, clear_color: [4]f32) Renderer3D {
+    pub fn init(frame: *const FrameRenderer, clear_color: [4]f32) Renderer3D {
         var color_attachment = wgpu.WGPURenderPassColorAttachment{
-            .view = frame.texture._v,
+            .view = frame.render_context.surface_texture._v,
             .resolveTarget = null,
             .clearValue = .{ .r = clear_color[0], .g = clear_color[1], .b = clear_color[2], .a = clear_color[3] },
             .loadOp = wgpu.WGPULoadOp_Clear,
@@ -127,7 +148,6 @@ pub const Renderer3D = struct {
         const pass = wgpu.wgpuCommandEncoderBeginRenderPass(frame.encoder._e, &descriptor);
 
         return Renderer3D{
-            .cam_binding = camera_binding,
             .frame = frame,
             .pass = RenderPass{
                 ._p = pass,
@@ -142,10 +162,12 @@ pub const Renderer3D = struct {
     // endregion
 
     pub fn drawGrid(self: *Renderer3D) !void {
+        const frame_bg_info = self.frame.render_context.frame_bg_info;
+
         const descriptor = PipelineDescriptor{
-            .shader = createShader(self.frame.device, wgsl),
+            .shader = createShader(self.frame.render_context.device, wgsl),
             .bind_group_layouts = &.{
-                self.cam_binding.bgl,
+                frame_bg_info.bgl,
             },
             .primitive = .{
                 .topology = .triangle_strip,
@@ -153,22 +175,22 @@ pub const Renderer3D = struct {
             },
         };
 
-        const pipeline = try createPipeline(self.frame.device, self.frame.texture, descriptor);
+        const pipeline = try createPipeline(self.frame.render_context.device, &self.frame.render_context.surface_texture, descriptor);
         wgpu.wgpuRenderPassEncoderSetPipeline(self.pass._p, pipeline._p);
-        wgpu.wgpuRenderPassEncoderSetBindGroup(self.pass._p, 0, self.cam_binding.bg._g, 0, null);
+        wgpu.wgpuRenderPassEncoderSetBindGroup(self.pass._p, 0, frame_bg_info.bg._g, 0, null);
 
         wgpu.wgpuRenderPassEncoderDraw(self.pass._p, 4, 1, 0, 0);
     }
 };
 
 pub const Renderer2D = struct {
-    frame: RenderFrame,
+    frame: *const FrameRenderer,
     pass: RenderPass,
 
     // region Renderer2D.Lifecycle
-    pub fn init(frame: RenderFrame) Renderer2D {
+    pub fn init(frame: *const FrameRenderer) Renderer2D {
         var color_attachment = wgpu.WGPURenderPassColorAttachment{
-            .view = frame.texture._v,
+            .view = frame.render_context.surface_texture._v,
             .loadOp = wgpu.WGPULoadOp_Load,
             .storeOp = wgpu.WGPUStoreOp_Store,
         };
@@ -203,7 +225,8 @@ pub const Renderer2D = struct {
         defer a.deinit();
         const aa = a.allocator();
 
-        const fps = try std.fmt.allocPrintZ(aa, "{d:.2}", .{1 / self.frame.delta_time});
+        const dt = self.frame.render_context.getDeltaTime();
+        const fps = try std.fmt.allocPrintZ(aa, "{d:.2}", .{if (dt == 0) 0 else 1 / dt});
 
         imgui.igBegin("FPS");
         imgui.igText(fps);
@@ -217,56 +240,67 @@ pub const Renderer2D = struct {
     }
 };
 
-pub const RenderFrame = struct {
-    queue: core.Queue,
-    device: core.Device,
-    cam_binding: ?app.CameraBinding,
-    encoder: Encoder,
-    texture: core.Texture,
+pub const RenderContext = struct {
+    device: *const core.Device,
+    queue: *const core.Queue,
+    surface_texture: core.Texture,
+    frame_bg_info: *const BindGroupInfo,
+
     global_time: i128,
-    delta_time: f32,
+    delta_time: i128,
+
+    pub fn getDeltaTime(self: *const RenderContext) f32 {
+        return @as(f32, @floatFromInt(self.delta_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+    }
+};
+
+pub const FrameRenderer = struct {
+    render_context: RenderContext,
+    encoder: Encoder,
 
     // region RenderFrame.Lifecycle
-    pub fn init(cam_binding: ?app.CameraBinding, queue: core.Queue, device: core.Device, texture: core.Texture, previous_frame: ?RenderFrame) RenderFrame {
-        const encoder = wgpu.wgpuDeviceCreateCommandEncoder(device._d, &.{});
+    pub fn init(render_context: RenderContext) FrameRenderer {
+        const encoder = wgpu.wgpuDeviceCreateCommandEncoder(render_context.device._d, &.{});
 
-        const global_time = std.time.nanoTimestamp();
-        const last_global_time = if (previous_frame) |pf| pf.global_time else global_time;
-
-        return RenderFrame{
-            .queue = queue,
-            .device = device,
-            .cam_binding = cam_binding,
+        return FrameRenderer{
+            .render_context = render_context,
             .encoder = Encoder{ ._e = encoder },
-            .texture = texture,
-            .global_time = global_time,
-            .delta_time = @as(f32, @floatFromInt(global_time - last_global_time)) / @as(f32, @floatFromInt(std.time.ns_per_s)),
         };
     }
 
-    pub fn destroy(self: *RenderFrame) void {
+    pub fn destroy(self: *FrameRenderer) void {
         self.encoder.destroy();
-        self.texture.destroy();
     }
     // endregion
 
-    pub fn beginRender3D(self: *RenderFrame, clear_color: [4]f32) !Renderer3D {
-        // Can only render a frame if we have a camera
-        if (self.cam_binding) |cam_binding| {
-            return Renderer3D.init(self, cam_binding, clear_color);
-        }
+    pub fn createFrameBinding(allocator: std.mem.Allocator, device: core.Device) !BindGroupInfo {
+        const buffer = try core.createUniformBuffer(device, @sizeOf(FrameUBO));
+        const bgl = try createBindGroupLayout(device, FRAME_BGL[0..]);
+        const bg = try createBindGroup(allocator, device, bgl, &[_]Binding{
+            Binding{ .buffer = .{ .buf = buffer, .size = @sizeOf(FrameUBO) } },
+        });
 
-        return error.NoCamera;
+        return BindGroupInfo{ .bgl = bgl, .bg = bg };
     }
 
-    pub fn beginRender2D(self: *const RenderFrame) Renderer2D {
-        return Renderer2D.init(self.*);
+    pub fn beginRender3D(self: *const FrameRenderer, clear_color: [4]f32) Renderer3D {
+        return Renderer3D.init(self, clear_color);
+    }
+
+    pub fn beginRender2D(self: *const FrameRenderer) Renderer2D {
+        return Renderer2D.init(self);
     }
 };
 // endregion
 
+// region Render.Constants
+const FRAME_BGL = [_]BindGroupLayoutEntry{
+    BindGroupLayoutEntry{ .binding = 0, .visibility = .both, .b_type = .{ .uniform_buffer = .{ .min_size = @sizeOf(FrameUBO) } } },
+};
+// endregion
+
 // region Render.Functions
-pub fn createShader(device: core.Device, code: [:0]const u8) Shader {
+pub fn createShader(device: *const core.Device, code: [:0]const u8) Shader {
     var wgslDesc: wgpu.WGPUShaderSourceWGSL = .{
         .chain = .{ .next = null, .sType = wgpu.WGPUSType_ShaderSourceWGSL },
         .code = wgpu.sliceToSv(code),
@@ -277,7 +311,7 @@ pub fn createShader(device: core.Device, code: [:0]const u8) Shader {
     return .{ ._s = wgpu.wgpuDeviceCreateShaderModule(device._d, &shaderDesc) };
 }
 
-pub fn createPipeline(device: core.Device, texture: core.Texture, descriptor: PipelineDescriptor) !Pipeline {
+pub fn createPipeline(device: *const core.Device, texture: *const core.Texture, descriptor: PipelineDescriptor) !Pipeline {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const aa = arena.allocator();
@@ -399,11 +433,12 @@ pub fn createBindGroupLayout(device: core.Device, entries: []const BindGroupLayo
     return BindGroupLayout{ ._l = wgpu.wgpuDeviceCreateBindGroupLayout(device._d, &bind_group_layout_descriptor) };
 }
 
-pub fn createBindGroup(device: core.Device, layout: BindGroupLayout, bindings: []const Binding) !BindGroup {
+pub fn createBindGroup(allocator: std.mem.Allocator, device: core.Device, layout: BindGroupLayout, bindings: []const Binding) !BindGroup {
     var tmp: [8]wgpu.WGPUBindGroupEntry = undefined;
     if (bindings.len > tmp.len) return error.TooManyBindings;
 
-    var i: usize = 0;
+    var buffer_map = std.AutoHashMap(u32, core.Buffer).init(allocator);
+    var i: u32 = 0;
     while (i < bindings.len) : (i += 1) {
         var e: wgpu.WGPUBindGroupEntry = std.mem.zeroes(wgpu.WGPUBindGroupEntry);
         e.binding = @intCast(i);
@@ -415,6 +450,8 @@ pub fn createBindGroup(device: core.Device, layout: BindGroupLayout, bindings: [
                 e.buffer = b.buf._b;
                 e.offset = b.offset;
                 e.size = b.size;
+
+                try buffer_map.put(i, b.buf);
             },
         }
 
@@ -426,7 +463,8 @@ pub fn createBindGroup(device: core.Device, layout: BindGroupLayout, bindings: [
         .entryCount = @intCast(bindings.len),
         .entries = &tmp,
     };
-    return .{ ._g = wgpu.wgpuDeviceCreateBindGroup(device._d, &description) };
+
+    return BindGroup{ ._g = wgpu.wgpuDeviceCreateBindGroup(device._d, &description), ._b = buffer_map };
 }
 // endregion
 

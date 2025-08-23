@@ -5,5 +5,7 @@ pub const imgui = @import("./lib/shared/imgui.zig");
 const app = @import("./lib/app.zig");
 pub const App = app.App;
 
+pub const math = @import("./lib/math.zig");
 pub const coord = @import("./lib/coord.zig");
 pub const camera = @import("./lib/camera.zig");
+pub const render = @import("./lib//render.zig");

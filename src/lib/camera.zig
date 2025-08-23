@@ -3,10 +3,14 @@ const coord = @import("./coord.zig");
 const core = @import("./core.zig");
 const math = @import("./math.zig");
 const wgpu = @import("./shared/wgpu.zig");
+const app = @import("./app.zig");
 
 pub const FlyCam = struct {
-    position: [3]f32,
+    owner: ?*app.App = null,
+
+    position: math.f32x3,
     rotation: coord.Rotator,
+    velocity: math.f32x3 = .init(.{ 0, 0, 0 }),
 
     captured: bool = false,
     first_mouse: bool = true,
@@ -19,20 +23,27 @@ pub const FlyCam = struct {
     move_speed: f32 = 3.0,
     sprint_mul: f32 = 2.5,
 
-    vp: [16]f32 = undefined,
+    vp: math.mat4x4 = undefined,
 
     pub fn toggleCapture(self: *FlyCam, window: core.Window) void {
         self.captured = !self.captured;
         window.setCursorMode(if (self.captured) .disabled else .normal);
     }
 
-    pub fn update(self: *FlyCam, window: core.Window, delta_time: f32) void {
-        if (window.hasInput(wgpu.GLFW_KEY_F1, .released) and self.f1_pressed) {
-            std.debug.print("Has released F1\n", .{});
-            self.toggleCapture(window);
-        }
-        self.f1_pressed = window.hasInput(wgpu.GLFW_KEY_F1, .press);
+    pub fn beginPlay(self: *FlyCam, owner: *app.App) !void {
+        self.owner = owner;
+        try owner.window.onInput(wgpu.GLFW_KEY_F1, .press, .{
+            .listener = FlyCam.onPressF1,
+            .userdata = @ptrCast(self),
+        });
+    }
 
+    fn onPressF1(userdata: *anyopaque) void {
+        const cam: *FlyCam = @ptrCast(@alignCast(userdata));
+        cam.toggleCapture(cam.owner.?.window);
+    }
+
+    pub fn update(self: *FlyCam, window: core.Window, delta_time: f32) void {
         if (self.captured) {
             const mouse_pos = window.getMousePosition();
             if (self.first_mouse) {
@@ -52,36 +63,38 @@ pub const FlyCam = struct {
         const yaw = math.deg2rad(self.rotation.yaw);
         const pitch = math.deg2rad(self.rotation.pitch);
 
-        var fwd: [3]f32 = .{
-            std.math.cos(pitch) * std.math.cos(yaw),
-            std.math.sin(pitch),
-            std.math.cos(pitch) * std.math.sin(yaw),
-        };
-        fwd = math.normalize(fwd);
+        const fwd = math.f32x3.init(.{
+            @cos(pitch) * @cos(yaw),
+            @sin(pitch),
+            @cos(pitch) * @sin(yaw),
+        }).normalize();
 
-        const world_up = .{ 0.0, 1.0, 0.0 };
-        const right = math.normalize(math.cross(fwd, world_up));
-        const up = math.normalize(math.cross(right, fwd));
+        const world_up = math.f32x3.init(.{ 0.0, 1.0, 0.0 });
+        const right = fwd.cross(world_up).normalize();
+        const up = right.cross(fwd).normalize();
 
         // 3. Keyboard movements
         var vel = self.move_speed;
         if (window.hasInput(wgpu.GLFW_KEY_LEFT_SHIFT, .press)) vel *= self.sprint_mul;
 
-        if (window.hasInput(wgpu.GLFW_KEY_W, .press)) self.position = math.add(self.position, math.scale(fwd, vel * delta_time));
-        if (window.hasInput(wgpu.GLFW_KEY_S, .press)) self.position = math.sub(self.position, math.scale(fwd, vel * delta_time));
-        if (window.hasInput(wgpu.GLFW_KEY_A, .press)) self.position = math.sub(self.position, math.scale(right, vel * delta_time));
-        if (window.hasInput(wgpu.GLFW_KEY_D, .press)) self.position = math.add(self.position, math.scale(right, vel * delta_time));
+        const dv = vel * delta_time;
+        if (window.hasInput(wgpu.GLFW_KEY_W, .press)) self.position = self.position.add(fwd.scale(dv));
+        if (window.hasInput(wgpu.GLFW_KEY_S, .press)) self.position = self.position.sub(fwd.scale(dv));
+        if (window.hasInput(wgpu.GLFW_KEY_A, .press)) self.position = self.position.sub(right.scale(dv));
+        if (window.hasInput(wgpu.GLFW_KEY_D, .press)) self.position = self.position.add(right.scale(dv));
+
         if (window.hasInput(wgpu.GLFW_KEY_E, .press) or window.hasInput(wgpu.GLFW_KEY_SPACE, .press))
-            self.position = math.add(self.position, math.scale(world_up, vel * delta_time));
+            self.position = self.position.add(world_up.scale(dv));
         if (window.hasInput(wgpu.GLFW_KEY_Q, .press) or window.hasInput(wgpu.GLFW_KEY_LEFT_CONTROL, .press))
-            self.position = math.sub(self.position, math.scale(world_up, vel * delta_time));
+            self.position = self.position.sub(world_up.scale(dv));
 
         // 4. VP
         const fb_size = window.getFrameBufferSize();
         const aspect = @as(f32, @floatFromInt(fb_size.width)) / @as(f32, @floatFromInt(fb_size.height));
-        const P = math.matrixPerspective(90.0, aspect, 0.1, 500);
-        const target = math.add(self.position, fwd);
-        const V = math.matrixLookAt(self.position, target, up);
-        self.vp = math.matrixMult(P, V);
+        const P = math.mat4x4.perspective(90.0, aspect, 0.1, 500);
+        const target = self.position.add(fwd);
+        const V = math.mat4x4.lookAt(self.position, target, up);
+
+        self.vp = P.mul(V);
     }
 };

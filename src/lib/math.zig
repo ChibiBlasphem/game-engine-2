@@ -1,196 +1,300 @@
 const std = @import("std");
 
-pub fn matrixIdentity() [16]f32 {
-    return .{
+// region Math.Primitives
+inline fn prim(comptime N: usize, comptime T: type, comptime name: []const u8) type {
+    return extern struct {
+        const P = @This();
+        const VecType = @Vector(N, T);
+        const IsFloat = @typeInfo(T) == .float;
+        const FT = if (IsFloat) T else f32;
+
+        pub const ZERO: P = .splat(0);
+        pub const ONE: P = .splat(1);
+
+        data: VecType align(@sizeOf(T)),
+
+        pub inline fn init(v: @Vector(N, T)) P {
+            return .{ .data = v };
+        }
+
+        pub inline fn splat(v: T) P {
+            return .{ .data = @splat(v) };
+        }
+
+        pub inline fn len(v: P) f32 {
+            const vf: @Vector(N, FT) = if (IsFloat) v.data else @floatFromInt(v.data);
+            return @sqrt(@reduce(.Add, vf * vf));
+        }
+
+        pub inline fn add(a: P, b: P) P {
+            return .init(a.data + b.data);
+        }
+
+        pub inline fn sub(a: P, b: P) P {
+            return .init(a.data - b.data);
+        }
+
+        pub inline fn scale(a: P, s: T) P {
+            return .{ .data = a.data * @as(VecType, @splat(s)) };
+        }
+
+        pub inline fn normalize(a: P) P {
+            const l = @sqrt(a.dot(a));
+            return a.scale(1.0 / l);
+        }
+
+        pub inline fn dot(a: P, b: P) T {
+            return @reduce(.Add, a.data * b.data);
+        }
+
+        pub usingnamespace if (N == 3) struct {
+            pub inline fn cross(a: P, b: P) P {
+                const yzx: @Vector(3, i32) = .{ 1, 2, 0 };
+                const zxy: @Vector(3, i32) = .{ 2, 0, 1 };
+
+                const a_yzx = @shuffle(T, a.data, a.data, yzx);
+                const a_zxy = @shuffle(T, a.data, a.data, zxy);
+                const b_zxy = @shuffle(T, b.data, b.data, zxy);
+                const b_yzx = @shuffle(T, b.data, b.data, yzx);
+
+                return .init(a_yzx * b_zxy - a_zxy * b_yzx);
+            }
+        } else struct {};
+
+        // region prim.format
+        pub inline fn format(self: P, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = opts;
+            try writer.print("{s}{{", .{name});
+            inline for (0..N) |i| {
+                try writer.print("{d}", .{self.data[i]});
+                if (i + 1 < N) try writer.writeAll(", ");
+            }
+            try writer.writeByte('}');
+        }
+        // endregion
+    };
+}
+// endregion
+
+// region Math.Structs
+pub const f32x2 = prim(2, f32, "f32x2");
+pub const f32x3 = prim(3, f32, "f32x3");
+pub const i32x2 = prim(2, i32, "i32x2");
+pub const i32x3 = prim(3, i32, "i32x3");
+
+// Column-major matrix
+pub const mat4x4 = extern struct {
+    const P = @This();
+    const Vec = @Vector(4, f32);
+    const Mat = @Vector(16, f32);
+    const identity: Mat = .{
         1, 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1, 0,
         0, 0, 0, 1,
     };
+
+    pub const IDENTITY: P = .init(identity);
+
+    data: Mat align(16),
+
+    // region mat4x4.Lifecycle
+    pub inline fn init(v: [16]f32) P {
+        return .{ .data = v };
+    }
+
+    pub inline fn translation(t: anytype) P {
+        const _t3d = switch (@TypeOf(t)) {
+            f32x2 => f32x3.init(.{ t.data[0], t.data[1], 0 }),
+            f32x3 => t,
+            else => @compileError("Only f32x2 or f32x3 is allowed for translate"),
+        };
+
+        var mat = identity;
+        mat[12] = _t3d.data[0];
+        mat[13] = _t3d.data[1];
+        mat[14] = _t3d.data[2];
+        return .{ .data = mat };
+    }
+
+    pub inline fn scaling(s: anytype) P {
+        const _s3d = switch (@TypeOf(s)) {
+            f32x2 => f32x3.init(.{ s.data[0], s.data[1], 1 }),
+            f32x3 => s,
+            else => @compileError("Only f32x2 or f32x3 is allowed for scaling"),
+        };
+
+        var mat = identity;
+        mat[0] = _s3d.data[0];
+        mat[5] = _s3d.data[1];
+        mat[10] = _s3d.data[2];
+        return .{ .data = mat };
+    }
+
+    pub inline fn rotationX(a: f32) P {
+        const c = @cos(a);
+        const s = @sin(a);
+
+        return .{
+            .data = .{
+                1, 0,  0, 0,
+                0, c,  s, 0,
+                0, -s, c, 0,
+                0, 0,  0, 1,
+            },
+        };
+    }
+
+    pub inline fn rotationY(a: f32) P {
+        const c = @cos(a);
+        const s = @sin(a);
+
+        return .{
+            .data = .{
+                c, 0, -s, 0,
+                0, 1, 0,  0,
+                s, 0, c,  0,
+                0, 0, 0,  1,
+            },
+        };
+    }
+
+    pub inline fn rotationZ(a: f32) P {
+        const c = @cos(a);
+        const s = @cos(a);
+
+        return .{
+            .data = .{
+                c,  s, 0, 0,
+                -s, c, 0, 0,
+                0,  0, 1, 0,
+                0,  0, 0, 1,
+            },
+        };
+    }
+    // endregion
+
+    pub inline fn mul(a: P, b: P) P {
+        const A: [4]Vec = @bitCast(a.data);
+        const B: [4]Vec = @bitCast(b.data);
+
+        var R: [4]Vec = undefined;
+        inline for (0..4) |j| {
+            const bj = B[j];
+            var col = A[0] * @as(Vec, @splat(bj[0]));
+            col = @mulAdd(Vec, A[1], @as(Vec, @splat(bj[1])), col);
+            col = @mulAdd(Vec, A[2], @as(Vec, @splat(bj[2])), col);
+            col = @mulAdd(Vec, A[3], @as(Vec, @splat(bj[3])), col);
+            R[j] = col;
+        }
+
+        return .{ .data = @bitCast(R) };
+    }
+
+    pub inline fn perspective(fovy: f32, aspect: f32, near: f32, far: f32) P {
+        const f = 1.0 / @tan(deg2rad(fovy) * 0.5);
+        const nf = 1.0 / (near - far);
+
+        return .init(.{
+            f / aspect, 0, 0,                     0,
+            0,          f, 0,                     0,
+            0,          0, (far + near) * nf,     -1,
+            0,          0, (2 * far * near) * nf, 0,
+        });
+    }
+
+    pub inline fn lookAt(p: f32x3, t: f32x3, world_up: f32x3) P {
+        const fwd = t.sub(p).normalize();
+        const right = fwd.cross(world_up).normalize();
+        const up = right.cross(fwd);
+
+        return .{
+            .data = .{
+                right.data[0], up.data[0], -fwd.data[0], 0,
+                right.data[1], up.data[1], -fwd.data[1], 0,
+                right.data[2], up.data[2], -fwd.data[2], 0,
+                -right.dot(p), -up.dot(p), fwd.dot(p),   1,
+            },
+        };
+    }
+};
+// endregion
+
+// region Math.Tests
+test "f32xN.len" {
+    const v = f32x2.init(.{ 3, 4 });
+    try std.testing.expectApproxEqRel(5, v.len(), 0.0001);
 }
 
-pub fn matrixMult(a: [16]f32, b: [16]f32) [16]f32 {
-    var r: [16]f32 = undefined;
-    // colonne-major: r = a * b
-    r[0] = a[0] * b[0] + a[4] * b[1] + a[8] * b[2] + a[12] * b[3];
-    r[4] = a[0] * b[4] + a[4] * b[5] + a[8] * b[6] + a[12] * b[7];
-    r[8] = a[0] * b[8] + a[4] * b[9] + a[8] * b[10] + a[12] * b[11];
-    r[12] = a[0] * b[12] + a[4] * b[13] + a[8] * b[14] + a[12] * b[15];
+test "f32xN.dot" {
+    const v0 = f32x3.init(.{ -1, 2, 3 });
+    const v1 = f32x3.init(.{ 4, 5, 6 });
+    const act = v0.dot(v1);
 
-    r[1] = a[1] * b[0] + a[5] * b[1] + a[9] * b[2] + a[13] * b[3];
-    r[5] = a[1] * b[4] + a[5] * b[5] + a[9] * b[6] + a[13] * b[7];
-    r[9] = a[1] * b[8] + a[5] * b[9] + a[9] * b[10] + a[13] * b[11];
-    r[13] = a[1] * b[12] + a[5] * b[13] + a[9] * b[14] + a[13] * b[15];
-
-    r[2] = a[2] * b[0] + a[6] * b[1] + a[10] * b[2] + a[14] * b[3];
-    r[6] = a[2] * b[4] + a[6] * b[5] + a[10] * b[6] + a[14] * b[7];
-    r[10] = a[2] * b[8] + a[6] * b[9] + a[10] * b[10] + a[14] * b[11];
-    r[14] = a[2] * b[12] + a[6] * b[13] + a[10] * b[14] + a[14] * b[15];
-
-    r[3] = a[3] * b[0] + a[7] * b[1] + a[11] * b[2] + a[15] * b[3];
-    r[7] = a[3] * b[4] + a[7] * b[5] + a[11] * b[6] + a[15] * b[7];
-    r[11] = a[3] * b[8] + a[7] * b[9] + a[11] * b[10] + a[15] * b[11];
-    r[15] = a[3] * b[12] + a[7] * b[13] + a[11] * b[14] + a[15] * b[15];
-    return r;
+    try std.testing.expectApproxEqRel(24, act, 0.0001);
 }
 
-pub fn matrixTranslate2D(x: f32, y: f32) [16]f32 {
-    var m = matrixIdentity();
-    m[12] = x;
-    m[13] = y;
-    return m;
+test "f32xN.normalize" {
+    const v = f32x3.init(.{ 2, 1, 0 });
+    const n = f32x3.init(.{ 0.8944272, 0.4472136, 0 });
+    try std.testing.expectEqual(n, v.normalize());
 }
 
-pub fn matrixScale2D(sx: f32, sy: f32) [16]f32 {
-    return .{
-        sx, 0,  0, 0,
-        0,  sy, 0, 0,
-        0,  0,  1, 0,
-        0,  0,  0, 1,
-    };
+test "f32x3.cross" {
+    {
+        const v0 = f32x3.init(.{ 1, 0, 0 });
+        const v1 = f32x3.init(.{ 0, 1, 0 });
+        const vexp = f32x3.init(.{ 0, 0, 1 });
+        const vact = v0.cross(v1);
+
+        inline for (0..3) |i| {
+            try std.testing.expectApproxEqRel(vexp.data[i], vact.data[i], 0.0001);
+        }
+    }
 }
 
-pub fn matrixTranslate3D(x: f32, y: f32, z: f32) [16]f32 {
-    var m = matrixIdentity();
-    m[12] = x;
-    m[13] = y;
-    m[14] = z;
-    return m;
-}
+test "mat4x4.mul" {
+    const a_mat: mat4x4 = .init(.{ 5, 0, 3, 1, 2, 6, 8, 8, 6, 2, 1, 5, 1, 0, 4, 6 });
+    const b_mat: mat4x4 = .init(.{ 7, 1, 9, 5, 5, 8, 4, 3, 8, 2, 3, 7, 0, 6, 8, 9 });
+    const res_mat: mat4x4 = .init(.{ 96, 24, 58, 90, 68, 56, 95, 107, 69, 18, 71, 81, 69, 52, 92, 142 });
 
-pub fn matrixScale3D(sx: f32, sy: f32, sz: f32) [16]f32 {
-    return .{
-        sx, 0,  0,  0,
-        0,  sy, 0,  0,
-        0,  0,  sz, 0,
-        0,  0,  0,  1,
-    };
+    try std.testing.expectEqual(res_mat, a_mat.mul(b_mat));
 }
+// endregion
 
-pub fn matrixRotateX(a: f32) [16]f32 {
-    const c = @cos(a);
-    const s = @sin(a);
-    return .{
-        1, 0,  0, 0,
-        0, c,  s, 0,
-        0, -s, c, 0,
-        0, 0,  0, 1,
-    };
-}
+// pub fn matrixOrtho2D(aspect: f32, zoom: f32) [16]f32 {
+//     const l: f32 = -zoom * aspect;
+//     const r: f32 = zoom * aspect;
+//     const b: f32 = -zoom;
+//     const t: f32 = zoom;
+//     const n: f32 = -1.0;
+//     const f: f32 = 1.0;
 
-pub fn matrixRotateY(a: f32) [16]f32 {
-    const c = @cos(a);
-    const s = @sin(a);
-    return .{
-        c, 0, -s, 0,
-        0, 1, 0,  0,
-        s, 0, c,  0,
-        0, 0, 0,  1,
-    };
-}
+//     return .{
+//         2.0 / (r - l),      0,                  0,             0,
+//         0,                  2.0 / (t - b),      0,             0,
+//         0,                  0,                  1.0 / (f - n), 0,
+//         -(r + l) / (r - l), -(t + b) / (t - b), -n / (f - n),  1,
+//     };
+// }
 
-pub fn matrixRotateZ(a: f32) [16]f32 {
-    const c = @cos(a);
-    const s = @sin(a);
-    return .{
-        c,  s, 0, 0,
-        -s, c, 0, 0,
-        0,  0, 1, 0,
-        0,  0, 0, 1,
-    };
-}
+// pub fn matrixView2D(cam_x: f32, cam_y: f32, cam_rot: f32) [16]f32 {
+//     const Tinv = matrixTranslate2D(-cam_x, -cam_y);
+//     const Rinv = matrixRotateZ(-cam_rot);
+//     return matrixMult(Rinv, Tinv);
+// }
 
-pub fn matrixOrtho2D(aspect: f32, zoom: f32) [16]f32 {
-    const l: f32 = -zoom * aspect;
-    const r: f32 = zoom * aspect;
-    const b: f32 = -zoom;
-    const t: f32 = zoom;
-    const n: f32 = -1.0;
-    const f: f32 = 1.0;
-
-    return .{
-        2.0 / (r - l),      0,                  0,             0,
-        0,                  2.0 / (t - b),      0,             0,
-        0,                  0,                  1.0 / (f - n), 0,
-        -(r + l) / (r - l), -(t + b) / (t - b), -n / (f - n),  1,
-    };
-}
-
-pub fn matrixView2D(cam_x: f32, cam_y: f32, cam_rot: f32) [16]f32 {
-    const Tinv = matrixTranslate2D(-cam_x, -cam_y);
-    const Rinv = matrixRotateZ(-cam_rot);
-    return matrixMult(Rinv, Tinv);
-}
-
-pub fn matrixPerspective(fov_y_deg: f32, aspect: f32, z_near: f32, z_far: f32) [16]f32 {
-    const f = 1.0 / @tan((fov_y_deg * std.math.pi / 180.0) * 0.5);
-    const nf = 1.0 / (z_near - z_far);
-    return .{
-        f / aspect, 0, 0,                         0,
-        0,          f, 0,                         0,
-        0,          0, (z_far + z_near) * nf,     -1,
-        0,          0, (2 * z_far * z_near) * nf, 0,
-    };
-}
-
-pub fn vec3(x: f32, y: f32, z: f32) [3]f32 {
-    return .{ x, y, z };
-}
-
-pub fn vsub(a: [3]f32, b: [3]f32) [3]f32 {
-    return .{ a[0] - b[0], a[1] - b[1], a[2] - b[2] };
-}
-pub fn dot(a: [3]f32, b: [3]f32) f32 {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-pub fn cross(a: [3]f32, b: [3]f32) [3]f32 {
-    return .{
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    };
-}
-
-pub fn normalize(a: [3]f32) [3]f32 {
-    const len = @sqrt(dot(a, a));
-    return .{ a[0] / len, a[1] / len, a[2] / len };
-}
-
-// colonne-major
-pub fn matrixLookAt(eye: [3]f32, target: [3]f32, up_hint: [3]f32) [16]f32 {
-    const fwd = normalize(vsub(target, eye)); // +Z caméra (dans notre conv) → on va construire une base
-    const right = normalize(cross(fwd, up_hint)); // +X
-    const up = cross(right, fwd); // +Y
-    // On veut une vue qui amène eye→origine et oriente axes monde vers axes caméra
-    return .{
-        right[0],         up[0],         -fwd[0],       0,
-        right[1],         up[1],         -fwd[1],       0,
-        right[2],         up[2],         -fwd[2],       0,
-        -dot(right, eye), -dot(up, eye), dot(fwd, eye), 1,
-    };
+pub fn deg2rad(angle: f32) f32 {
+    return angle * (std.math.pi / 180.0);
 }
 
 pub fn clampf(value: f32, min: f32, max: f32) f32 {
     return if (value < min) min else if (value > max) max else value;
 }
 
-pub fn deg2rad(angle: f32) f32 {
-    return angle * (std.math.pi / 180.0);
-}
-
-pub fn add(a: [3]f32, b: [3]f32) [3]f32 {
-    return .{ a[0] + b[0], a[1] + b[1], a[2] + b[2] };
-}
-
-pub fn sub(a: [3]f32, b: [3]f32) [3]f32 {
-    return .{ a[0] - b[0], a[1] - b[1], a[2] - b[2] };
-}
-
-pub fn scale(a: [3]f32, s: f32) [3]f32 {
-    return .{ a[0] * s, a[1] * s, a[2] * s };
-}
-
-pub fn mat4Inverse(m: [16]f32) [16]f32 {
+pub fn mat4Inverse(mat: mat4x4) mat4x4 {
+    const m = mat.data;
     var inv: [16]f32 = undefined;
 
     inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
@@ -221,5 +325,6 @@ pub fn mat4Inverse(m: [16]f32) [16]f32 {
     var out: [16]f32 = undefined;
     var i: usize = 0;
     while (i < 16) : (i += 1) out[i] = inv[i] * inv_det;
-    return out;
+
+    return .{ .data = out };
 }

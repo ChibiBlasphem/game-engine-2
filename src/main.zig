@@ -10,16 +10,17 @@ pub fn main() !void {
     defer app.destroy();
 
     var camera = mythopia.camera.FlyCam{
-        .position = .{ 0, 1.5, 0 },
+        .position = .init(.{ 0, 1.5, 0 }),
         .rotation = mythopia.coord.Rotator.init(-90, 0, 0),
     };
     _ = try app.setCamera(&camera);
 
     while (!app.window.shouldClose()) {
-        if (app.getRenderFrame()) |frame| {
+        var frame: mythopia.render.FrameRenderer = undefined;
+        if (app.getFrameRenderer(&frame)) {
             defer frame.destroy();
 
-            var renderer3D = try frame.beginRender3D(.{ 218.0 / 255.0, 226.0 / 255.0, 237.0 / 255.0, 1 });
+            var renderer3D = frame.beginRender3D(.{ 0, 0, 0, 1 });
             _ = try renderer3D.drawGrid();
             renderer3D.commit();
 
@@ -28,7 +29,7 @@ pub fn main() !void {
             renderer2D.addText("Hello world");
             renderer2D.commit();
 
-            app.commitFrame(frame);
+            app.commitFrame(&frame);
         }
 
         app.waitForNextFrame();

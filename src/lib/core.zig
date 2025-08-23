@@ -19,16 +19,45 @@ pub const CursorMode = enum {
     unavailable,
 };
 
-pub const KeyMode = enum {
-    press,
+pub const KeyAction = enum {
     released,
+    press,
     repeat,
 };
 
+pub const KeyListenerMapKey = struct {
+    code: c_int,
+    action: KeyAction,
+};
+
+pub const KeyListenerCallbackInfo = struct {
+    listener: *const fn (userdata: *anyopaque) void,
+    userdata: *anyopaque,
+};
+
 pub const Window = struct {
+    const KLM = std.AutoHashMap(KeyListenerMapKey, std.ArrayList(KeyListenerCallbackInfo));
+
     _w: *wgpu.GLFWwindow,
+    _a: std.mem.Allocator,
+    _inputFun: ?wgpu.GLFWkeyfun = null,
+    _keyListeners: KLM,
+
+    pub fn init(alloc: std.mem.Allocator, window: *wgpu.GLFWwindow) !Window {
+        return Window{
+            ._w = window,
+            ._a = alloc,
+            ._keyListeners = KLM.init(alloc),
+        };
+    }
 
     pub fn destroy(self: *Window) void {
+        var it = self._keyListeners.iterator();
+        while (it.next()) |item| {
+            item.value_ptr.*.deinit();
+        }
+        self._keyListeners.deinit();
+
         wgpu.glfwDestroyWindow(self._w);
     }
 
@@ -59,8 +88,45 @@ pub const Window = struct {
         wgpu.glfwSetInputMode(self._w, wgpu.GLFW_CURSOR, mapCursorMode(cursor_mode));
     }
 
-    pub fn hasInput(self: *const Window, input: c_int, mode: KeyMode) bool {
-        return wgpu.glfwGetKey(self._w, input) == mapKeyMode(mode);
+    pub fn hasInput(self: *const Window, input: c_int, mode: KeyAction) bool {
+        return wgpu.glfwGetKey(self._w, input) == mapKeyAction(mode);
+    }
+
+    pub fn onInput(self: *Window, code: c_int, action: KeyAction, callback_info: KeyListenerCallbackInfo) !void {
+        if (self._inputFun == null) {
+            self._inputFun = wgpu.glfwSetKeyCallback(self._w, Window._handleInput);
+            wgpu.glfwSetWindowUserPointer(self._w, self);
+        }
+
+        // Register a listener
+        try self._registerKeyListener(code, action, callback_info);
+    }
+
+    fn _registerKeyListener(self: *Window, code: c_int, action: KeyAction, callback_info: KeyListenerCallbackInfo) !void {
+        const key = KeyListenerMapKey{ .code = code, .action = action };
+        const gop = try self._keyListeners.getOrPut(key);
+
+        if (!gop.found_existing) {
+            gop.value_ptr.* = std.ArrayList(KeyListenerCallbackInfo).init(self._a);
+        }
+
+        try gop.value_ptr.*.append(callback_info);
+    }
+
+    fn _handleInput(win: ?*wgpu.GLFWwindow, code: c_int, scancode: c_int, action: c_int, mods: c_int) callconv(.c) void {
+        _ = scancode;
+        _ = mods;
+
+        const ptr = wgpu.glfwGetWindowUserPointer(win);
+        if (ptr == null) return;
+        const self: *Window = @ptrCast(@alignCast(ptr.?));
+
+        const key_action = toKeyAction(action);
+        if (self._keyListeners.get(.{ .code = code, .action = key_action })) |listeners_info| {
+            for (listeners_info.items) |listener_info| {
+                listener_info.listener(listener_info.userdata);
+            }
+        }
     }
 };
 
@@ -134,7 +200,7 @@ pub fn pollEvents() void {
     wgpu.glfwPollEvents();
 }
 
-pub fn createWindow(width: i32, height: i32, title: [:0]const u8) !Window {
+pub fn createWindow(alloc: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8) !Window {
     if (wgpu.glfwInit() == 0) return error.GLFWInitFailed;
 
     wgpu.glfwWindowHint(wgpu.GLFW_CLIENT_API, wgpu.GLFW_NO_API);
@@ -142,7 +208,7 @@ pub fn createWindow(width: i32, height: i32, title: [:0]const u8) !Window {
 
     if (window == null) return error.WindowCreationFailed;
 
-    return Window{ ._w = window.? };
+    return Window.init(alloc, window.?);
 }
 
 pub fn createInstance() !Instance {
@@ -297,12 +363,16 @@ fn mapCursorMode(cursor_mode: CursorMode) c_int {
     };
 }
 
-fn mapKeyMode(key_mode: KeyMode) c_int {
-    return switch (key_mode) {
+fn mapKeyAction(key_action: KeyAction) c_int {
+    return switch (key_action) {
         .released => wgpu.GLFW_RELEASE,
         .press => wgpu.GLFW_PRESS,
         .repeat => wgpu.GLFW_REPEAT,
     };
+}
+
+fn toKeyAction(action: c_int) KeyAction {
+    return @enumFromInt(action);
 }
 // endregion
 

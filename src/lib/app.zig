@@ -21,11 +21,10 @@ pub const App = struct {
     device: core.Device,
     queue: core.Queue,
     surface_configuration: core.SurfaceConfiguration,
+    frame_bg_info: render.BindGroupInfo,
 
     camera: ?*camera_ns.FlyCam = null,
-    camera_binding: ?CameraBinding = null,
-
-    last_render_frame: ?render.RenderFrame = null,
+    last_frame_time: ?i128 = null,
 
     // region App.InternalStructs
     pub const Camera = struct {
@@ -74,8 +73,8 @@ pub const App = struct {
     // endregion
 
     // region App.Lifecycle
-    pub fn init(_: std.mem.Allocator, title: [:0]const u8, size: core.FrameBufferSize) !App {
-        const window = try core.createWindow(size.width, size.height, title);
+    pub fn init(alloc: std.mem.Allocator, title: [:0]const u8, size: core.FrameBufferSize) !App {
+        const window = try core.createWindow(alloc, size.width, size.height, title);
         const instance = try core.createInstance();
         const surface = try core.createWindowSurface(instance, window);
         const adapter = core.requestAdapter(instance, surface);
@@ -84,6 +83,8 @@ pub const App = struct {
 
         const surface_configuration = core.getSurfaceConfiguration(window, adapter, device, surface);
         core.configureSurface(surface, surface_configuration);
+
+        const frame_bg_info = try render.FrameRenderer.createFrameBinding(alloc, device);
 
         imgui.igCreateContext();
         imgui.igStyleDark();
@@ -103,10 +104,14 @@ pub const App = struct {
             .device = device,
             .queue = queue,
             .surface_configuration = surface_configuration,
+            .frame_bg_info = frame_bg_info,
         };
     }
 
     pub fn destroy(self: *App) void {
+        self.frame_bg_info.bg.destroy();
+        self.frame_bg_info.bgl.destroy();
+
         imgui.igWgpuShutdown();
         imgui.igGlfwShutdown();
         imgui.igDestroyContext();
@@ -122,22 +127,11 @@ pub const App = struct {
     // endregion
 
     pub fn setCamera(self: *App, camera: *camera_ns.FlyCam) !void {
-        const ubo = try core.createUniformBuffer(self.device, 144);
-
-        const bgl = try render.createBindGroupLayout(self.device, &.{.{
-            .binding = 0,
-            .visibility = .both,
-            .b_type = .{ .uniform_buffer = .{ .min_size = 144 } },
-        }});
-        const bg = try render.createBindGroup(self.device, bgl, &.{.{
-            .buffer = .{ .buf = ubo, .size = 144 },
-        }});
-
         self.camera = camera;
-        self.camera_binding = .{ .ubo = ubo, .bg = bg, .bgl = bgl };
+        try camera.beginPlay(self);
     }
 
-    pub fn getRenderFrame(self: *App) ?*render.RenderFrame {
+    pub fn getFrameRenderer(self: *App, frame: *render.FrameRenderer) bool {
         // Shift + Escape to close window
         const has_shift_pressed = self.window.hasInput(wgpu.GLFW_KEY_LEFT_SHIFT, .press);
         const has_escape_pressed = self.window.hasInput(wgpu.GLFW_KEY_ESCAPE, .press);
@@ -145,6 +139,7 @@ pub const App = struct {
             self.window.close();
         }
 
+        // Handle window resize
         const fb_size = self.window.getFrameBufferSize();
         if (fb_size.width != self.surface_configuration._sc.width or fb_size.height != self.surface_configuration._sc.height) {
             self.surface_configuration._sc.width = @intCast(@max(fb_size.width, 1));
@@ -153,33 +148,42 @@ pub const App = struct {
             core.configureSurface(self.surface, self.surface_configuration);
         }
 
+        // Preparing frame renderer
         if (core.getSurfaceTexture(self.surface, self.surface_configuration)) |texture| {
-            const frame = render.RenderFrame.init(self.camera_binding, self.queue, self.device, texture, self.last_render_frame);
+            const global_time = std.time.nanoTimestamp();
+            const render_context = render.RenderContext{
+                .device = &self.device,
+                .queue = &self.queue,
+                .surface_texture = texture,
+                .frame_bg_info = &self.frame_bg_info,
+                .global_time = global_time,
+                .delta_time = if (self.last_frame_time) |t| global_time - t else 0,
+            };
 
+            self.last_frame_time = global_time;
+            frame.* = render.FrameRenderer.init(render_context);
+
+            // Camera must be in the scene, not a App component
             if (self.camera) |camera| {
-                camera.update(self.window, frame.delta_time);
+                camera.update(self.window, frame.render_context.getDeltaTime());
 
-                const ubo_value = struct {
-                    matrix: [16]f32,
-                    inv_vp: [16]f32,
-                    position: [3]f32,
-                    _pad: f32 = 0.0,
-                }{
-                    .matrix = camera.vp,
-                    .inv_vp = math.mat4Inverse(camera.vp),
-                    .position = camera.position,
+                const ubo_value = render.FrameUBO{
+                    .vp = camera.vp,
+                    .ivp = math.mat4Inverse(camera.vp),
+                    .pos = camera.position,
                 };
 
-                core.writeBuffer(self.queue, self.camera_binding.?.ubo, std.mem.asBytes(&ubo_value), 0);
+                if (self.frame_bg_info.bg.getBuffer(0)) |b| {
+                    core.writeBuffer(self.queue, b, std.mem.asBytes(&ubo_value), 0);
+                }
             }
 
-            self.last_render_frame = frame;
-            return &self.last_render_frame.?;
+            return true;
         }
-        return null;
+        return false;
     }
 
-    pub fn commitFrame(self: *App, frame: *render.RenderFrame) void {
+    pub fn commitFrame(self: *App, frame: *render.FrameRenderer) void {
         const command = wgpu.wgpuCommandEncoderFinish(frame.encoder._e, null);
         wgpu.wgpuQueueSubmit(self.queue._q, 1, &command);
         _ = wgpu.wgpuSurfacePresent(self.surface._s);

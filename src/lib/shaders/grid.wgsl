@@ -84,7 +84,7 @@ fn fs_main(@location(0) ndc: vec2<f32>) -> @location(0) vec4<f32> {
 
   let w_minor : f32 = 0.001;
   let w_major : f32 = 0.002;
-  let w_axis  : f32 = w_major;   // mêmes épaisseurs que majeures
+  let w_axis  : f32 = 0.005;   // mêmes épaisseurs que majeures
 
   let a_minor : f32 = 0.28;
   let a_major : f32 = 0.50;
@@ -139,7 +139,7 @@ fn fs_main(@location(0) ndc: vec2<f32>) -> @location(0) vec4<f32> {
   if (out_a <= 0.0) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
 
   // petit fade distance optionnel
-  let fade_dist : f32 = 4000.0;
+  let fade_dist : f32 = 10.0;
   let d = length(world_pos.xz - gFrame.cam_pos.xz);
   let fade = clamp(1.0 - d / fade_dist, 0.0, 1.0);
   out_a *= fade;
