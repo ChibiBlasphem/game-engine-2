@@ -73,8 +73,8 @@ pub const App = struct {
     // endregion
 
     // region App.Lifecycle
-    pub fn init(alloc: std.mem.Allocator, title: [:0]const u8, size: core.FrameBufferSize) !App {
-        const window = try core.createWindow(alloc, size.width, size.height, title);
+    pub fn init(alloc: std.mem.Allocator, title: [:0]const u8, size: core.FrameBufferSize, fullscreen: bool) !App {
+        const window = try core.createWindow(alloc, size.width, size.height, title, fullscreen);
         const instance = try core.createInstance();
         const surface = try core.createWindowSurface(instance, window);
         const adapter = core.requestAdapter(instance, surface);

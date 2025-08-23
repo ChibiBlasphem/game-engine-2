@@ -11,6 +11,17 @@ typedef struct {
     uint32_t frames_in_flight; // 2 ou 3
 } ImGuiWgpuInitC;
 
+typedef enum ImGuiWindowFlagsZ {
+    ImGuiWindowFlagsZ_None              = 0,
+    ImGuiWindowFlagsZ_NoTitleBar        = 1 << 0,
+    ImGuiWindowFlagsZ_NoResize          = 1 << 1,
+    ImGuiWindowFlagsZ_NoMove            = 1 << 2,
+    ImGuiWindowFlagsZ_NoScrollbar       = 1 << 3,
+    ImGuiWindowFlagsZ_NoScrollWithMouse = 1 << 4,
+    ImGuiWindowFlagsZ_NoCollapse        = 1 << 5,
+    ImGuiWindowFlagsZ_AlwaysAutoResize  = 1 << 6,
+} ImGuiWindowFlagsZ;
+
 void igCreateContext(void);
 void igDestroyContext(void);
 void igStyleDark(void);
@@ -32,9 +43,11 @@ void igRender(void);
 void igRenderDrawData(void* render_pass_encoder); // WGPURenderPassEncoder
 
 // helpers
-void igBegin(const char* title);
+void igBegin(const char* title, bool* opened, ImGuiWindowFlagsZ flags);
 void igText(const char* text);
 void igEnd(void);
+
+void igCheckbox(const char* label, bool* v);
 
 #ifdef __cplusplus
 }

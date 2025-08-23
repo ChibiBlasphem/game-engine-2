@@ -38,6 +38,8 @@ void igRenderDrawData(void* pass) {
     ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), (WGPURenderPassEncoder)pass);
 }
 
-void igBegin(const char* title) { ImGui::Begin(title); }
+void igBegin(const char* title, bool* opened, ImGuiWindowFlagsZ flags) { ImGui::Begin(title, opened, flags); }
 void igText(const char* text) { ImGui::TextUnformatted(text); }
 void igEnd(void) { ImGui::End(); }
+
+void igCheckbox(const char* label, bool* v) { ImGui::Checkbox(label, v); }

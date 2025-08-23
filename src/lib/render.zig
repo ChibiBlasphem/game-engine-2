@@ -84,6 +84,7 @@ pub const BindGroupInfo = struct {
 };
 
 pub const PipelineDescriptor = struct {
+    name: [:0]const u8,
     shader: Shader,
     vertex_layout: ?coord.VertexBufferLayoutDescriptor = null,
     primitive: struct {
@@ -165,6 +166,7 @@ pub const Renderer3D = struct {
         const frame_bg_info = self.frame.render_context.frame_bg_info;
 
         const descriptor = PipelineDescriptor{
+            .name = "Grid Pipeline",
             .shader = createShader(self.frame.render_context.device, wgsl),
             .bind_group_layouts = &.{
                 frame_bg_info.bgl,
@@ -228,13 +230,13 @@ pub const Renderer2D = struct {
         const dt = self.frame.render_context.getDeltaTime();
         const fps = try std.fmt.allocPrintZ(aa, "{d:.2}", .{if (dt == 0) 0 else 1 / dt});
 
-        imgui.igBegin("FPS");
+        imgui.igBegin("FPS", null, imgui.ImGuiWindowFlagsZ_None);
         imgui.igText(fps);
         imgui.igEnd();
     }
 
     pub fn addText(_: *Renderer2D, text: [:0]const u8) void {
-        imgui.igBegin("Debug");
+        imgui.igBegin("Debug", null, imgui.ImGuiWindowFlagsZ_None);
         imgui.igText(text);
         imgui.igEnd();
     }
@@ -274,9 +276,9 @@ pub const FrameRenderer = struct {
     // endregion
 
     pub fn createFrameBinding(allocator: std.mem.Allocator, device: core.Device) !BindGroupInfo {
-        const buffer = try core.createUniformBuffer(device, @sizeOf(FrameUBO));
-        const bgl = try createBindGroupLayout(device, FRAME_BGL[0..]);
-        const bg = try createBindGroup(allocator, device, bgl, &[_]Binding{
+        const buffer = try core.createUniformBuffer(&device, @sizeOf(FrameUBO));
+        const bgl = try createBindGroupLayout(&device, FRAME_BGL[0..]);
+        const bg = try createBindGroup(allocator, &device, bgl, &[_]Binding{
             Binding{ .buffer = .{ .buf = buffer, .size = @sizeOf(FrameUBO) } },
         });
 
@@ -382,7 +384,7 @@ pub fn createPipeline(device: *const core.Device, texture: *const core.Texture, 
     defer wgpu.wgpuPipelineLayoutRelease(pipeline_layout);
 
     const pipeline_descriptor = wgpu.WGPURenderPipelineDescriptor{
-        .label = wgpu.sliceToSv("Grid Pipeline"),
+        .label = wgpu.sliceToSv(descriptor.name),
         .vertex = vertex_state,
         .fragment = &fragment_state,
         .layout = pipeline_layout,
@@ -403,7 +405,7 @@ pub fn createPipeline(device: *const core.Device, texture: *const core.Texture, 
     return Pipeline{ ._p = wgpu.wgpuDeviceCreateRenderPipeline(device._d, &pipeline_descriptor) };
 }
 
-pub fn createBindGroupLayout(device: core.Device, entries: []const BindGroupLayoutEntry) !BindGroupLayout {
+pub fn createBindGroupLayout(device: *const core.Device, entries: []const BindGroupLayoutEntry) !BindGroupLayout {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
@@ -433,7 +435,7 @@ pub fn createBindGroupLayout(device: core.Device, entries: []const BindGroupLayo
     return BindGroupLayout{ ._l = wgpu.wgpuDeviceCreateBindGroupLayout(device._d, &bind_group_layout_descriptor) };
 }
 
-pub fn createBindGroup(allocator: std.mem.Allocator, device: core.Device, layout: BindGroupLayout, bindings: []const Binding) !BindGroup {
+pub fn createBindGroup(allocator: std.mem.Allocator, device: *const core.Device, layout: BindGroupLayout, bindings: []const Binding) !BindGroup {
     var tmp: [8]wgpu.WGPUBindGroupEntry = undefined;
     if (bindings.len > tmp.len) return error.TooManyBindings;
 

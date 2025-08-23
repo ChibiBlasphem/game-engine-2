@@ -200,11 +200,21 @@ pub fn pollEvents() void {
     wgpu.glfwPollEvents();
 }
 
-pub fn createWindow(alloc: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8) !Window {
+pub fn createWindow(alloc: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !Window {
     if (wgpu.glfwInit() == 0) return error.GLFWInitFailed;
 
+    var monitor: ?*wgpu.GLFWmonitor = null;
+    var w: c_int = @intCast(width);
+    var h: c_int = @intCast(height);
+    if (fullscreen) {
+        monitor = wgpu.glfwGetPrimaryMonitor();
+        const mode = wgpu.glfwGetVideoMode(monitor);
+        w = mode.*.width;
+        h = mode.*.height;
+    }
+
     wgpu.glfwWindowHint(wgpu.GLFW_CLIENT_API, wgpu.GLFW_NO_API);
-    const window = wgpu.glfwCreateWindow(@intCast(width), @intCast(height), title, null, null);
+    const window = wgpu.glfwCreateWindow(w, h, title, monitor, null);
 
     if (window == null) return error.WindowCreationFailed;
 
@@ -325,7 +335,7 @@ pub fn createVertexBuffer(device: Device, bytes: []const u8) !Buffer {
     return Buffer{ ._b = wgpu.wgpuDeviceCreateBuffer(device._d, &descriptor) };
 }
 
-pub fn createUniformBuffer(device: Device, byte_len: usize) !Buffer {
+pub fn createUniformBuffer(device: *const Device, byte_len: usize) !Buffer {
     const descriptor = wgpu.WGPUBufferDescriptor{
         .label = wgpu.sliceToSv("ubo"),
         .usage = wgpu.WGPUBufferUsage_Uniform | wgpu.WGPUBufferUsage_CopyDst,

@@ -2,11 +2,13 @@ const std = @import("std");
 const mythopia = @import("mythopia");
 
 pub fn main() !void {
+    var b_show_grid: bool = true;
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
-    var app = try mythopia.App.init(alloc, "Hello WGPU", .{ .width = 1280, .height = 720 });
+    var app = try mythopia.App.init(alloc, "Hello WGPU", .{ .width = 1280, .height = 720 }, false);
     defer app.destroy();
 
     var camera = mythopia.camera.FlyCam{
@@ -21,12 +23,22 @@ pub fn main() !void {
             defer frame.destroy();
 
             var renderer3D = frame.beginRender3D(.{ 0, 0, 0, 1 });
-            _ = try renderer3D.drawGrid();
+            if (b_show_grid) {
+                _ = try renderer3D.drawGrid();
+            }
             renderer3D.commit();
 
             var renderer2D = frame.beginRender2D();
             renderer2D.renderFPS() catch {};
             renderer2D.addText("Hello world");
+
+            mythopia.imgui.igBegin(
+                "Viewport tools",
+                null,
+                mythopia.imgui.ImGuiWindowFlagsZ_NoResize | mythopia.imgui.ImGuiWindowFlagsZ_NoMove | mythopia.imgui.ImGuiWindowFlagsZ_AlwaysAutoResize,
+            );
+            mythopia.imgui.igCheckbox("Show grid", &b_show_grid);
+            mythopia.imgui.igEnd();
             renderer2D.commit();
 
             app.commitFrame(&frame);
