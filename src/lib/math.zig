@@ -293,6 +293,10 @@ pub fn clampf(value: f32, min: f32, max: f32) f32 {
     return if (value < min) min else if (value > max) max else value;
 }
 
+pub fn clamp(value: i32, min: i32, max: i32) i32 {
+    return if (value < min) min else if (value > max) max else value;
+}
+
 pub fn mat4Inverse(mat: mat4x4) mat4x4 {
     const m = mat.data;
     var inv: [16]f32 = undefined;

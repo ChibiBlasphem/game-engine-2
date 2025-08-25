@@ -1,6 +1,6 @@
 const std = @import("std");
-const imgui = @import("./shared/imgui.zig");
 const wgpu = @import("./shared/wgpu.zig");
+const nk = @import("./shared/nk.zig");
 const core = @import("./core.zig");
 const coord = @import("./coord.zig");
 const render = @import("./render.zig");
@@ -14,6 +14,7 @@ pub const CameraBinding = struct {
 };
 
 pub const App = struct {
+    allocator: std.mem.Allocator,
     window: core.Window,
     instance: core.Instance,
     surface: core.Surface,
@@ -22,6 +23,8 @@ pub const App = struct {
     queue: core.Queue,
     surface_configuration: core.SurfaceConfiguration,
     frame_bg_info: render.BindGroupInfo,
+    nk_render: render.NkRender,
+    nuklear: nk.Nuklear,
 
     camera: ?*camera_ns.FlyCam = null,
     last_frame_time: ?i128 = null,
@@ -73,8 +76,8 @@ pub const App = struct {
     // endregion
 
     // region App.Lifecycle
-    pub fn init(alloc: std.mem.Allocator, title: [:0]const u8, size: core.FrameBufferSize, fullscreen: bool) !App {
-        const window = try core.createWindow(alloc, size.width, size.height, title, fullscreen);
+    pub fn init(allocator: std.mem.Allocator, title: [:0]const u8, size: core.Size, fullscreen: bool) !App {
+        const window = try core.createWindow(allocator, size.width, size.height, title, fullscreen);
         const instance = try core.createInstance();
         const surface = try core.createWindowSurface(instance, window);
         const adapter = core.requestAdapter(instance, surface);
@@ -84,19 +87,12 @@ pub const App = struct {
         const surface_configuration = core.getSurfaceConfiguration(window, adapter, device, surface);
         core.configureSurface(surface, surface_configuration);
 
-        const frame_bg_info = try render.FrameRenderer.createFrameBinding(alloc, device);
-
-        imgui.igCreateContext();
-        imgui.igStyleDark();
-        imgui.igGlfwInit(window._w, true);
-        imgui.igWgpuInit(&.{
-            .device = device._d,
-            .depth_format = 0,
-            .rt_format = surface_configuration._sc.format,
-            .frames_in_flight = 2,
-        });
+        const nuklear = try nk.Nuklear.init(&device, &queue);
+        const frame_bg_info = try render.FrameRenderer.createFrameBinding(allocator, &device);
+        const nk_render = try render.FrameRenderer.createNkRender(allocator, &device, surface_configuration._sc.format, nuklear.tex);
 
         return App{
+            .allocator = allocator,
             .window = window,
             .instance = instance,
             .surface = surface,
@@ -105,16 +101,17 @@ pub const App = struct {
             .queue = queue,
             .surface_configuration = surface_configuration,
             .frame_bg_info = frame_bg_info,
+            .nuklear = nuklear,
+            .nk_render = nk_render,
         };
     }
 
     pub fn destroy(self: *App) void {
+        self.nk_render.destroy();
+        self.nuklear.deinit();
+
         self.frame_bg_info.bg.destroy();
         self.frame_bg_info.bgl.destroy();
-
-        imgui.igWgpuShutdown();
-        imgui.igGlfwShutdown();
-        imgui.igDestroyContext();
 
         self.queue.destroy();
         self.device.destroy();
@@ -133,8 +130,8 @@ pub const App = struct {
 
     pub fn getFrameRenderer(self: *App, frame: *render.FrameRenderer) bool {
         // Shift + Escape to close window
-        const has_shift_pressed = self.window.hasInput(wgpu.GLFW_KEY_LEFT_SHIFT, .press);
-        const has_escape_pressed = self.window.hasInput(wgpu.GLFW_KEY_ESCAPE, .press);
+        const has_shift_pressed = self.window.hasInput(.left_shift, .press);
+        const has_escape_pressed = self.window.hasInput(.escape, .press);
         if (has_shift_pressed and has_escape_pressed) {
             self.window.close();
         }
@@ -152,16 +149,20 @@ pub const App = struct {
         if (core.getSurfaceTexture(self.surface, self.surface_configuration)) |texture| {
             const global_time = std.time.nanoTimestamp();
             const render_context = render.RenderContext{
+                .window = &self.window,
                 .device = &self.device,
                 .queue = &self.queue,
                 .surface_texture = texture,
                 .frame_bg_info = &self.frame_bg_info,
+                .nuklear = &self.nuklear,
+                .nk_render = &self.nk_render,
+
                 .global_time = global_time,
                 .delta_time = if (self.last_frame_time) |t| global_time - t else 0,
             };
 
             self.last_frame_time = global_time;
-            frame.* = render.FrameRenderer.init(render_context);
+            frame.* = render.FrameRenderer.init(render_context, self.allocator);
 
             // Camera must be in the scene, not a App component
             if (self.camera) |camera| {

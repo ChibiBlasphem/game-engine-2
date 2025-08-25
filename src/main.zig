@@ -2,7 +2,7 @@ const std = @import("std");
 const mythopia = @import("mythopia");
 
 pub fn main() !void {
-    var b_show_grid: bool = true;
+    const b_show_grid: bool = true;
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -29,17 +29,25 @@ pub fn main() !void {
             renderer3D.commit();
 
             var renderer2D = frame.beginRender2D();
-            renderer2D.renderFPS() catch {};
-            renderer2D.addText("Hello world");
+            frame.render_context.nuklear.demoWindow();
+            try renderer2D.commit();
 
-            mythopia.imgui.igBegin(
-                "Viewport tools",
-                null,
-                mythopia.imgui.ImGuiWindowFlagsZ_NoResize | mythopia.imgui.ImGuiWindowFlagsZ_NoMove | mythopia.imgui.ImGuiWindowFlagsZ_AlwaysAutoResize,
-            );
-            mythopia.imgui.igCheckbox("Show grid", &b_show_grid);
-            mythopia.imgui.igEnd();
-            renderer2D.commit();
+            // ui.newFrame();
+            // ui.demoWindow();
+            // ui.endFrame();
+
+            // var renderer2D = frame.beginRender2D();
+            // renderer2D.renderFPS() catch {};
+            // renderer2D.addText("Hello world");
+
+            // mythopia.imgui.igBegin(
+            //     "Viewport tools",
+            //     null,
+            //     mythopia.imgui.ImGuiWindowFlagsZ_NoResize | mythopia.imgui.ImGuiWindowFlagsZ_NoMove | mythopia.imgui.ImGuiWindowFlagsZ_AlwaysAutoResize,
+            // );
+            // mythopia.imgui.igCheckbox("Show grid", &b_show_grid);
+            // mythopia.imgui.igEnd();
+            // renderer2D.commit();
 
             app.commitFrame(&frame);
         }

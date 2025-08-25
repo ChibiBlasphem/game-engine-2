@@ -17,20 +17,6 @@ pub fn build(b: *std.Build) void {
 
     const deps_inc = b.path("deps/include");
     const deps_lib = b.path("deps/lib");
-    const imgui = b.path("deps/imgui");
-    const imgui_backends = b.path("deps/imgui/backends");
-    const imgui_bridge = b.path("src/imgui_bridge/");
-
-    const imgui_sources = &[_][]const u8{
-        "deps/imgui/imgui.cpp",
-        "deps/imgui/imgui_draw.cpp",
-        "deps/imgui/imgui_tables.cpp",
-        "deps/imgui/imgui_widgets.cpp",
-        // "deps/imgui/imgui_demo.cpp", // optionnel
-        "deps/imgui/backends/imgui_impl_glfw.cpp",
-        "deps/imgui/backends/imgui_impl_wgpu.cpp",
-        "src/imgui_bridge/imgui_bridge.cpp",
-    };
 
     const os_tag = target.result.os.tag;
 
@@ -48,10 +34,8 @@ pub fn build(b: *std.Build) void {
     });
 
     engine_mod.addIncludePath(deps_inc);
-    engine_mod.addIncludePath(imgui);
-    engine_mod.addIncludePath(imgui_backends);
-    engine_mod.addIncludePath(imgui_bridge);
-    engine_mod.addCSourceFiles(.{ .files = imgui_sources, .flags = &.{ "-std=c++17", "-DIMGUI_IMPL_WEBGPU_BACKEND_WGPU" } });
+    engine_mod.addIncludePath(b.path("deps/include/nuklear"));
+    engine_mod.addIncludePath(b.path("deps/include/stb"));
 
     switch (os_tag) {
         .macos => {
@@ -78,6 +62,12 @@ pub fn build(b: *std.Build) void {
     engine_mod.addCSourceFile(.{
         .file = b.path("deps/src/c_stb_image.c"),
         .flags = &.{},
+    });
+    engine_mod.addCSourceFile(.{
+        .file = b.path("src/ui/nk_impl.c"),
+        .flags = &.{
+            "-std=c11",
+        },
     });
 
     // We will also create a module for our other entry point, 'main.zig'.

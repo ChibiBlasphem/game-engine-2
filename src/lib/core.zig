@@ -1,135 +1,14 @@
 const std = @import("std");
 const wgpu = @import("./shared/wgpu.zig");
+const core_window = @import("./core/window.zig");
+
+pub usingnamespace core_window;
 
 // region Core.Aliases
 const SV = wgpu.WGPUStringView;
 // endregion
 
 // region Core.Structs
-pub const FrameBufferSize = struct {
-    width: i32,
-    height: i32,
-};
-
-pub const CursorMode = enum {
-    captured,
-    disabled,
-    hidden,
-    normal,
-    unavailable,
-};
-
-pub const KeyAction = enum {
-    released,
-    press,
-    repeat,
-};
-
-pub const KeyListenerMapKey = struct {
-    code: c_int,
-    action: KeyAction,
-};
-
-pub const KeyListenerCallbackInfo = struct {
-    listener: *const fn (userdata: *anyopaque) void,
-    userdata: *anyopaque,
-};
-
-pub const Window = struct {
-    const KLM = std.AutoHashMap(KeyListenerMapKey, std.ArrayList(KeyListenerCallbackInfo));
-
-    _w: *wgpu.GLFWwindow,
-    _a: std.mem.Allocator,
-    _inputFun: ?wgpu.GLFWkeyfun = null,
-    _keyListeners: KLM,
-
-    pub fn init(alloc: std.mem.Allocator, window: *wgpu.GLFWwindow) !Window {
-        return Window{
-            ._w = window,
-            ._a = alloc,
-            ._keyListeners = KLM.init(alloc),
-        };
-    }
-
-    pub fn destroy(self: *Window) void {
-        var it = self._keyListeners.iterator();
-        while (it.next()) |item| {
-            item.value_ptr.*.deinit();
-        }
-        self._keyListeners.deinit();
-
-        wgpu.glfwDestroyWindow(self._w);
-    }
-
-    pub fn close(self: *Window) void {
-        wgpu.glfwSetWindowShouldClose(self._w, wgpu.GLFW_TRUE);
-    }
-
-    pub fn getFrameBufferSize(self: *const Window) FrameBufferSize {
-        var fb_w: c_int = 0;
-        var fb_h: c_int = 0;
-        wgpu.glfwGetFramebufferSize(self._w, &fb_w, &fb_h);
-        return FrameBufferSize{ .width = @intCast(fb_w), .height = @intCast(fb_h) };
-    }
-
-    pub fn getMousePosition(self: *const Window) struct { x: f64, y: f64 } {
-        var mx: f64 = 0;
-        var my: f64 = 0;
-        wgpu.glfwGetCursorPos(self._w, &mx, &my);
-
-        return .{ .x = mx, .y = my };
-    }
-
-    pub fn shouldClose(self: *const Window) bool {
-        return wgpu.glfwWindowShouldClose(self._w) != 0;
-    }
-
-    pub fn setCursorMode(self: *const Window, cursor_mode: CursorMode) void {
-        wgpu.glfwSetInputMode(self._w, wgpu.GLFW_CURSOR, mapCursorMode(cursor_mode));
-    }
-
-    pub fn hasInput(self: *const Window, input: c_int, mode: KeyAction) bool {
-        return wgpu.glfwGetKey(self._w, input) == mapKeyAction(mode);
-    }
-
-    pub fn onInput(self: *Window, code: c_int, action: KeyAction, callback_info: KeyListenerCallbackInfo) !void {
-        if (self._inputFun == null) {
-            self._inputFun = wgpu.glfwSetKeyCallback(self._w, Window._handleInput);
-            wgpu.glfwSetWindowUserPointer(self._w, self);
-        }
-
-        // Register a listener
-        try self._registerKeyListener(code, action, callback_info);
-    }
-
-    fn _registerKeyListener(self: *Window, code: c_int, action: KeyAction, callback_info: KeyListenerCallbackInfo) !void {
-        const key = KeyListenerMapKey{ .code = code, .action = action };
-        const gop = try self._keyListeners.getOrPut(key);
-
-        if (!gop.found_existing) {
-            gop.value_ptr.* = std.ArrayList(KeyListenerCallbackInfo).init(self._a);
-        }
-
-        try gop.value_ptr.*.append(callback_info);
-    }
-
-    fn _handleInput(win: ?*wgpu.GLFWwindow, code: c_int, scancode: c_int, action: c_int, mods: c_int) callconv(.c) void {
-        _ = scancode;
-        _ = mods;
-
-        const ptr = wgpu.glfwGetWindowUserPointer(win);
-        if (ptr == null) return;
-        const self: *Window = @ptrCast(@alignCast(ptr.?));
-
-        const key_action = toKeyAction(action);
-        if (self._keyListeners.get(.{ .code = code, .action = key_action })) |listeners_info| {
-            for (listeners_info.items) |listener_info| {
-                listener_info.listener(listener_info.userdata);
-            }
-        }
-    }
-};
-
 pub const Instance = struct {
     _i: wgpu.WGPUInstance,
     pub fn destroy(self: *Instance) void {
@@ -200,7 +79,7 @@ pub fn pollEvents() void {
     wgpu.glfwPollEvents();
 }
 
-pub fn createWindow(alloc: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !Window {
+pub fn createWindow(alloc: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !core_window.Window {
     if (wgpu.glfwInit() == 0) return error.GLFWInitFailed;
 
     var monitor: ?*wgpu.GLFWmonitor = null;
@@ -218,7 +97,7 @@ pub fn createWindow(alloc: std.mem.Allocator, width: i32, height: i32, title: [:
 
     if (window == null) return error.WindowCreationFailed;
 
-    return Window.init(alloc, window.?);
+    return core_window.Window.init(alloc, window.?);
 }
 
 pub fn createInstance() !Instance {
@@ -228,7 +107,7 @@ pub fn createInstance() !Instance {
     return Instance{ ._i = instance.? };
 }
 
-pub fn createWindowSurface(instance: Instance, window: Window) !Surface {
+pub fn createWindowSurface(instance: Instance, window: core_window.Window) !Surface {
     const surface = wgpu.glfwCreateWindowWGPUSurface(instance._i, window._w);
     if (surface == null) return error.SurfaceCreationFailed;
 
@@ -283,7 +162,7 @@ pub fn getDeviceQueue(device: Device) !Queue {
     return Queue{ ._q = queue };
 }
 
-pub fn getSurfaceConfiguration(window: Window, adapter: Adapter, device: Device, surface: Surface) SurfaceConfiguration {
+pub fn getSurfaceConfiguration(window: core_window.Window, adapter: Adapter, device: Device, surface: Surface) SurfaceConfiguration {
     const fb_size = window.getFrameBufferSize();
 
     var caps = std.mem.zeroes(wgpu.WGPUSurfaceCapabilities);
@@ -324,9 +203,9 @@ pub fn getSurfaceTexture(surface: Surface, surface_configuration: SurfaceConfigu
     };
 }
 
-pub fn createVertexBuffer(device: Device, bytes: []const u8) !Buffer {
+pub fn createVertexBuffer(device: *const Device, name: [:0]const u8, bytes: []const u8) !Buffer {
     const descriptor = wgpu.WGPUBufferDescriptor{
-        .label = wgpu.sliceToSv("vb"),
+        .label = wgpu.sliceToSv(name),
         .usage = wgpu.WGPUBufferUsage_Vertex | wgpu.WGPUBufferUsage_CopyDst,
         .size = bytes.len,
         .mappedAtCreation = wgpu.wb(false),
@@ -335,9 +214,20 @@ pub fn createVertexBuffer(device: Device, bytes: []const u8) !Buffer {
     return Buffer{ ._b = wgpu.wgpuDeviceCreateBuffer(device._d, &descriptor) };
 }
 
-pub fn createUniformBuffer(device: *const Device, byte_len: usize) !Buffer {
+pub fn createIndexBuffer(device: *const Device, name: [:0]const u8, bytes: []const u8) !Buffer {
     const descriptor = wgpu.WGPUBufferDescriptor{
-        .label = wgpu.sliceToSv("ubo"),
+        .label = wgpu.sliceToSv(name),
+        .usage = wgpu.WGPUBufferUsage_Index | wgpu.WGPUBufferUsage_CopyDst,
+        .size = bytes.len,
+        .mappedAtCreation = wgpu.wb(false),
+    };
+
+    return Buffer{ ._b = wgpu.wgpuDeviceCreateBuffer(device._d, &descriptor) };
+}
+
+pub fn createUniformBuffer(device: *const Device, name: [:0]const u8, byte_len: usize) !Buffer {
+    const descriptor = wgpu.WGPUBufferDescriptor{
+        .label = wgpu.sliceToSv(name),
         .usage = wgpu.WGPUBufferUsage_Uniform | wgpu.WGPUBufferUsage_CopyDst,
         .size = byte_len,
         .mappedAtCreation = wgpu.wb(false),
@@ -361,28 +251,6 @@ fn getSurfaceFormat(caps: wgpu.WGPUSurfaceCapabilities) wgpu.WGPUTextureFormat {
         }
     }
     return caps.formats[0];
-}
-
-fn mapCursorMode(cursor_mode: CursorMode) c_int {
-    return switch (cursor_mode) {
-        .captured => wgpu.GLFW_CURSOR_CAPTURED,
-        .disabled => wgpu.GLFW_CURSOR_DISABLED,
-        .hidden => wgpu.GLFW_CURSOR_HIDDEN,
-        .normal => wgpu.GLFW_CURSOR_NORMAL,
-        .unavailable => wgpu.GLFW_CURSOR_UNAVAILABLE,
-    };
-}
-
-fn mapKeyAction(key_action: KeyAction) c_int {
-    return switch (key_action) {
-        .released => wgpu.GLFW_RELEASE,
-        .press => wgpu.GLFW_PRESS,
-        .repeat => wgpu.GLFW_REPEAT,
-    };
-}
-
-fn toKeyAction(action: c_int) KeyAction {
-    return @enumFromInt(action);
 }
 // endregion
 

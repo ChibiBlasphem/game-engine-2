@@ -32,7 +32,7 @@ pub const FlyCam = struct {
 
     pub fn beginPlay(self: *FlyCam, owner: *app.App) !void {
         self.owner = owner;
-        try owner.window.onInput(wgpu.GLFW_KEY_F1, .press, .{
+        try owner.window.onInput(.f1, .press, .{
             .listener = FlyCam.onPressF1,
             .userdata = @ptrCast(self),
         });
@@ -75,17 +75,17 @@ pub const FlyCam = struct {
 
         // 3. Keyboard movements
         var vel = self.move_speed;
-        if (window.hasInput(wgpu.GLFW_KEY_LEFT_SHIFT, .press)) vel *= self.sprint_mul;
+        if (window.hasInput(.left_shift, .press)) vel *= self.sprint_mul;
 
         const dv = vel * delta_time;
-        if (window.hasInput(wgpu.GLFW_KEY_W, .press)) self.position = self.position.add(fwd.scale(dv));
-        if (window.hasInput(wgpu.GLFW_KEY_S, .press)) self.position = self.position.sub(fwd.scale(dv));
-        if (window.hasInput(wgpu.GLFW_KEY_A, .press)) self.position = self.position.sub(right.scale(dv));
-        if (window.hasInput(wgpu.GLFW_KEY_D, .press)) self.position = self.position.add(right.scale(dv));
+        if (window.hasInput(.w, .press)) self.position = self.position.add(fwd.scale(dv));
+        if (window.hasInput(.s, .press)) self.position = self.position.sub(fwd.scale(dv));
+        if (window.hasInput(.a, .press)) self.position = self.position.sub(right.scale(dv));
+        if (window.hasInput(.d, .press)) self.position = self.position.add(right.scale(dv));
 
-        if (window.hasInput(wgpu.GLFW_KEY_E, .press) or window.hasInput(wgpu.GLFW_KEY_SPACE, .press))
+        if (window.hasInput(.e, .press) or window.hasInput(.space, .press))
             self.position = self.position.add(world_up.scale(dv));
-        if (window.hasInput(wgpu.GLFW_KEY_Q, .press) or window.hasInput(wgpu.GLFW_KEY_LEFT_CONTROL, .press))
+        if (window.hasInput(.q, .press) or window.hasInput(.left_control, .press))
             self.position = self.position.sub(world_up.scale(dv));
 
         // 4. VP

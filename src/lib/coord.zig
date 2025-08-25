@@ -53,6 +53,7 @@ pub const Vertex = extern struct {
 pub const VertexFormat = enum {
     float32x2,
     float32x3,
+    unorm8x4,
 };
 
 pub const VertexAttribute = struct {
@@ -109,6 +110,7 @@ pub fn mapVertexFormat(vertex_format: VertexFormat) wgpu.WGPUVertexFormat {
     return switch (vertex_format) {
         .float32x2 => wgpu.WGPUVertexFormat_Float32x2,
         .float32x3 => wgpu.WGPUVertexFormat_Float32x3,
+        .unorm8x4 => wgpu.WGPUVertexFormat_Unorm8x4,
     };
 }
 
